@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Top Ideas — Analyst Coverage Tracker</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+
+<div class="marquee-wrap"><div class="marquee-track" id="marquee"></div></div>
+
+<header>
+  <div class="brand-row">
+    <div class="brand-mark">
+      <svg class="brand-ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="37" fill="none" stroke="currentColor" stroke-width="12"/></svg>
+      <span class="brand-word">PPENHEIMER</span>
+    </div>
+    <div class="brand-sub">&amp; Co. <span class="brand-chevrons">›</span><span class="brand-chevrons">›</span> Top Ideas Monthly</div>
+  </div>
+  <h1>Top Ideas, <em>tracked monthly.</em></h1>
+  <div class="sub">Every analyst, every sector, every pick from Jan 2023 through the latest report — priced against the report's own cover date and compounded month over month whenever a pick is held. This tracker covers <span id="stat-analysts">—</span> analysts across <span id="stat-sectors">4</span> coverage groups, spanning <span id="stat-picks">—</span> logged picks from <span id="stat-range">—</span>.</div>
+</header>
+
+<div class="page-tabs">
+  <div class="page-tab active" data-page="coverage">Coverage</div>
+  <div class="page-tab" data-page="insights">Insights</div>
+</div>
+
+<div class="controls" id="coverage-controls">
+  <div class="tabs" id="tabs"></div>
+  <select class="sort-select" id="sortSelect">
+    <option value="default">Sort: coverage order</option>
+    <option value="total_desc">Sort: all-time return ↓</option>
+    <option value="total_asc">Sort: all-time return ↑</option>
+    <option value="trailing_desc">Sort: trailing 12mo ↓</option>
+    <option value="half_desc">Sort: half-year return ↓</option>
+    <option value="ytd_desc">Sort: YTD return ↓</option>
+    <option value="picks_desc">Sort: most picks logged</option>
+    <option value="churn_desc">Sort: most idea changes</option>
+    <option value="churn_asc">Sort: most conviction (fewest changes)</option>
+    <option value="name">Sort: analyst A–Z</option>
+  </select>
+  <div class="search-wrap"><input id="search" placeholder="Search analyst, ticker, or company…" /></div>
+</div>
+
+<div class="controls" id="time-controls" style="border-bottom:none;padding-top:0;">
+  <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-right:4px;">Period</span>
+  <div class="time-tabs" id="timeTabs"></div>
+</div>
+
+<main id="main"></main>
+
+<div class="insights-wrap" id="insights" style="display:none;"></div>
+
+<footer>
+  <b>How to read this.</b> Each analyst contributes one "top idea" per monthly report. When the ticker is the same as last month, that's a held position and the return shown is the price change since the prior report's cover price. When the ticker changes ("CHANGED" badge), that's a fresh pick — no return is attributed for the switch itself, since the exit price of the abandoned position isn't part of this dataset. All-time and trailing-12-report figures compound only the periods where a position was actually held; they don't reflect a real portfolio, dividends, fees, or slippage.<br/><br/>
+  <b>ETF comparison.</b> Where a sector ETF was supplied, each analyst's detail view shows their actual calendar-year return (compounded from held periods within that year) beside the ETF's full-year return for the same year. This is available for 18 of 47 analysts so far — the rest will show once benchmark data is supplied for that coverage area.<br/><br/>
+  <b>Data corrections applied.</b> Several analyst names were merged where the source file listed the same person under inconsistent labels across reports (credential suffixes, stray sector-name prefixes, or a co-analyst credit) — verified by unbroken ticker continuity across the switch. Five rows with a corrupted PDF-extraction artifact (price populated as a flat "500" alongside garbled company text) were nulled out rather than guessed at. Sector groupings are assigned from each analyst's documented coverage area; a small number of analysts new to this file were classified by their typical pick composition.<br/><br/>
+  Source: Oppenheimer Top Ideas Monthly reports, Jan 2023 – Jun 2026, transcribed into a coverage spreadsheet.
+</footer>
+
+<script id="raw-data" type="application/json">__DATA_JSON__</script>
+<script src="js/script.js"></script>
+</body>
+</html>
