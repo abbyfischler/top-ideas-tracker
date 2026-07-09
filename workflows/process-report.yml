@@ -1,0 +1,124 @@
+name: Process new Top Ideas report
+
+# Triggers the moment a PDF is added to the incoming/ folder — including a
+# plain drag-and-drop upload through GitHub's website, no git or command
+# line needed on the person's end.
+on:
+  push:
+    paths:
+      - "incoming/*.pdf"
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  process-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install poppler (pdftotext)
+        run: sudo apt-get update -q && sudo apt-get install -yq poppler-utils
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Find the new PDF(s)
+        id: find_pdf
+        run: |
+          NEW_PDFS=$(git diff --name-only --diff-filter=A ${{ github.event.before }} ${{ github.sha }} -- 'incoming/*.pdf' || true)
+          if [ -z "$NEW_PDFS" ]; then
+            # fallback: on first run / force-push, just process everything currently in incoming/
+            NEW_PDFS=$(ls incoming/*.pdf 2>/dev/null || true)
+          fi
+          echo "Found: $NEW_PDFS"
+          echo "pdfs<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NEW_PDFS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Parse each report and update the tracker
+        id: process
+        run: |
+          set +e
+          FAILED=0
+          PROCESSED=""
+          FAIL_LOG=""
+          while IFS= read -r pdf; do
+            [ -z "$pdf" ] && continue
+            echo "=== Processing $pdf ==="
+            csv_path="/tmp/$(basename "$pdf" .pdf).csv"
+            LOG=$(python3 scripts/parse_report_pdf.py "$pdf" --out "$csv_path" 2>&1)
+            echo "$LOG"
+            if [ $? -ne 0 ]; then
+              FAILED=1
+              FAIL_LOG="$FAIL_LOG
+
+          ### $pdf
+          \`\`\`
+          $LOG
+          \`\`\`"
+              continue
+            fi
+            python3 scripts/add_report.py "$csv_path"
+            mkdir -p incoming/processed
+            git mv "$pdf" "incoming/processed/$(basename "$pdf")"
+            PROCESSED="$PROCESSED $pdf"
+          done <<< "${{ steps.find_pdf.outputs.pdfs }}"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+          {
+            echo "processed=$PROCESSED"
+            echo "fail_log<<EOF"
+            echo "$FAIL_LOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open an issue if anything needs a manual check
+        if: steps.process.outputs.failed == '1'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `A new report in \`incoming/\` couldn't be fully auto-processed and needs a quick manual check before it's added to the tracker.
+
+            ${{ steps.process.outputs.fail_log }}
+
+            **What to do:** open the CSV the parser produced (or re-run \`python scripts/parse_report_pdf.py your_file.pdf\` locally), fix whatever's flagged above, then run:
+            \`\`\`
+            python scripts/add_report.py the_fixed_file.csv
+            \`\`\`
+            and commit the result normally. The PDF is still sitting in \`incoming/\` untouched.`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "New report needs a manual check before it's added",
+              body: body,
+            });
+
+      - name: Open a Pull Request with the update
+        if: steps.process.outputs.failed == '0' && steps.process.outputs.processed != ''
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Add report(s):${{ steps.process.outputs.processed }}"
+          title: "New Top Ideas report(s) ready to merge"
+          body: |
+            This was generated automatically from the PDF(s) dropped into `incoming/`:
+            ${{ steps.process.outputs.processed }}
+
+            The parser found every analyst's pick and matched every ticker to a real price with no issues flagged — this should be safe to merge as-is. If you want to double check anything first, `data/master_picks.csv` in this PR shows exactly what rows were added.
+          branch: "auto-update/${{ github.run_number }}"
+          add-paths: |
+            data/master_picks.csv
+            data/data.json
+            index.html
+            incoming/processed/*
