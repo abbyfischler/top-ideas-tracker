@@ -77,7 +77,7 @@ def load_master_picks():
     return rows
 
 
-def build(rows, sector_map, etf_map, spx):
+def build(rows, sector_map, etf_map, spx, exit_prices):
     # group rows by analyst, preserving chronological order via report_key (YYYY-MM sorts correctly)
     by_analyst = defaultdict(list)
     for row in rows:
@@ -98,15 +98,27 @@ def build(rows, sector_map, etf_map, spx):
         hist = []
         for i, p in enumerate(picks):
             ret = None
+            ret_type = None
             if i > 0:
                 prev = picks[i - 1]
                 if prev['ticker'] == p['ticker'] and prev['price'] not in (None, 0) and p['price'] is not None:
                     ret = round((p['price'] - prev['price']) / prev['price'], 4)
+                    ret_type = "held"
+                elif prev['ticker'] != p['ticker'] and prev['price'] not in (None, 0) and p['date']:
+                    # a switch happened — if we have the abandoned ticker's price as of
+                    # THIS report's date (usually sourced from Bloomberg, see
+                    # exit_prices_needed.xlsx / apply_exit_prices.py), we can compute a
+                    # real return for the exited position instead of leaving this blank.
+                    exit_price = exit_prices.get((prev['ticker'], p['date']))
+                    if exit_price is not None:
+                        ret = round((exit_price - prev['price']) / prev['price'], 4)
+                        ret_type = "exit"
             hist.append({
                 "report_key": p['report_key'], "report_label": p['report_label'], "date": p['date'],
                 "ticker": p['ticker'], "company": p['company'], "price": p['price'],
-                "price_target": p['price_target'], "return": ret,
+                "price_target": p['price_target'], "return": ret, "return_type": ret_type,
                 "new_pick": (i == 0) or (picks[i - 1]['ticker'] != p['ticker']),
+                "exit_ticker": picks[i - 1]['ticker'] if (i > 0 and ret_type == "exit") else None,
             })
 
         cum = 1.0
@@ -179,11 +191,31 @@ def build(rows, sector_map, etf_map, spx):
     return final
 
 
+def load_exit_prices():
+    """Load data/exit_prices.csv if it exists -> {(ticker, date): price}.
+
+    This file is optional and built by scripts/apply_exit_prices.py from a
+    Bloomberg-filled spreadsheet. Without it, a ticker switch just shows a
+    blank return for that one month, same as always."""
+    path = DATA_DIR / "exit_prices.csv"
+    if not path.exists():
+        return {}
+    prices = {}
+    with open(path, newline='') as f:
+        for row in csv.DictReader(f):
+            try:
+                prices[(row['ticker'].strip(), row['date'].strip())] = float(row['price'])
+            except (ValueError, KeyError):
+                continue
+    return prices
+
+
 def main():
     rows = load_master_picks()
     sector_map = json.loads((DATA_DIR / "sector_map.json").read_text())
     etf_map = json.loads((DATA_DIR / "etf_map.json").read_text())
     spx = json.loads((DATA_DIR / "spx_benchmark.json").read_text())
+    exit_prices = load_exit_prices()
 
     unmapped = sorted({r['analyst'].strip() for r in rows} - set(sector_map.get('group', {}).keys()))
     if unmapped:
@@ -193,14 +225,18 @@ def main():
         print("They will still appear in the site, grouped last, with a blank sector label.")
         print("Add them to sector_map.json's \"group\" and \"label\" objects to classify them properly.\n")
 
-    final = build(rows, sector_map, etf_map, spx)
+    final = build(rows, sector_map, etf_map, spx, exit_prices)
 
     out_path = DATA_DIR / "data.json"
     out_path.write_text(json.dumps(final, separators=(',', ':')))
 
     total_picks = sum(len(a['history']) for a in final)
+    exit_count = sum(1 for a in final for h in a['history'] if h.get('return_type') == 'exit')
     print(f"Wrote {out_path}")
     print(f"  {len(final)} analysts, {total_picks} picks")
+    if exit_prices:
+        print(f"  {exit_count}/{sum(1 for a in final for h in a['history'] if h['new_pick'] and h is not a['history'][0])} "
+              f"ticker switches now have a real exit return (from data/exit_prices.csv)")
     all_dates = [h['date'] for a in final for h in a['history'] if h['date']]
     if all_dates:
         print(f"  date range: {min(all_dates)} to {max(all_dates)}")

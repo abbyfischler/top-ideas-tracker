@@ -199,22 +199,52 @@ function buildStatStrip(a){
 }
 
 function buildHistoryTable(a){
-  const rows = a.history.slice().reverse().map(h=>{
+  const withNext = a.history.map((h, i) => {
+    const next = a.history[i + 1];
+    // "next close" only makes sense if the position was still held next month —
+    // if the ticker changed, there's nothing to show (that position was exited,
+    // not carried forward, so no future price for it exists in this dataset)
+    const nextClose = (next && next.ticker === h.ticker) ? next.price : null;
+    const nextHeld = !!(next && next.ticker === h.ticker);
+    const cumPct = a.cum && a.cum[i] !== undefined ? (a.cum[i]-1)*100 : null;
+    return {...h, nextClose, nextHeld, hasNext: !!next, cumPct};
+  });
+
+  const rows = withNext.slice().reverse().map(h=>{
     const retPct = h.return===null? null : h.return*100;
     const badge = h.new_pick ? '<span class="new-badge" title="Ticker changed from the prior report">CHANGED</span>' : '';
+    let nextCloseCell;
+    if (h.nextClose !== null) {
+      nextCloseCell = fmtPrice(h.nextClose);
+    } else if (!h.hasNext) {
+      nextCloseCell = '<span title="Most recent report — no following month yet">—</span>';
+    } else {
+      nextCloseCell = '<span title="Position was exited before the following report — no price was recorded for it">—</span>';
+    }
+    let retCell;
+    if (retPct === null) {
+      retCell = `<span class="${pctClass(retPct)}">${fmtPct(retPct)}</span>`;
+    } else if (h.return_type === 'exit') {
+      retCell = `<span class="${pctClass(retPct)}" title="Reflects ${h.exit_ticker}'s performance up to this report, before the switch to ${h.ticker} — not ${h.ticker}'s own return">${fmtPct(retPct)}<span class="exit-tag">exit: ${h.exit_ticker}</span></span>`;
+    } else {
+      retCell = `<span class="${pctClass(retPct)}">${fmtPct(retPct)}</span>`;
+    }
     return `<tr>
       <td>${fmtDate(h.date)}</td>
       <td class="tk">${h.ticker||'—'}${badge}</td>
       <td class="co">${h.company||''}</td>
       <td>${fmtPrice(h.price)}</td>
       <td>${h.price_target!==null&&h.price_target!==undefined?'$'+h.price_target:'—'}</td>
-      <td class="${pctClass(retPct)}">${fmtPct(retPct)}</td>
+      <td>${nextCloseCell}</td>
+      <td class="${pctClass(retPct)}">${retCell}</td>
+      <td class="${pctClass(h.cumPct)}" style="font-weight:700;">${fmtPct(h.cumPct)}</td>
     </tr>`;
   }).join('');
   return `<div class="history-scroll"><table class="history-table">
-    <thead><tr><th>Report</th><th>Ticker</th><th>Company</th><th>Price</th><th>PT</th><th>Return</th></tr></thead>
+    <thead><tr><th>Report</th><th>Ticker</th><th>Company</th><th>Closing Price</th><th>Price Target</th><th>Next Month Close</th><th>Return</th><th>Overall Progress</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table></div>`;
+  </table></div>
+  <div class="etf-note" style="margin-top:8px;"><b>Return</b> = this row's Closing Price compared to the <i>prior</i> report's price for the same ticker — a one-month snapshot, not cumulative. <b>Overall Progress</b> (bold, right-hand column) is the running total from the very first tracked report through this one — compound all the Returns up to this row and that's what you get; this is the number to watch if you're asking "how are they doing overall" rather than "how did last month go." "Next Month Close" is shown so you can verify the following row's return without scrolling — a dash there means the pick changed before the next report. Rows marked <b>exit: TICKER</b> show the performance of the position that got replaced that month (sourced separately, not from the monthly report itself) rather than the new pick's — the new pick doesn't have a return of its own until the following report.</div>`;
 }
 
 function buildEtfCompare(a){

@@ -48,9 +48,13 @@ background needed.
 │   ├── build_standalone.py ← data/data.json + template → one self-contained .html file
 │   ├── parse_report_pdf.py ← reads a new report PDF directly, no manual transcription needed
 │   ├── add_report.py       ← appends parsed/manual picks to master_picks.csv and rebuilds everything
+│   ├── apply_exit_prices.py ← ingests a Bloomberg-filled exit_prices_needed.xlsx into data/exit_prices.csv
 │   └── generate_summary_report.py ← makes a Word doc summary you can send around
 └── requirements.txt
 ```
+
+`exit_prices_needed.xlsx` (in the root) lists every ticker-switch that's
+currently missing a return — see "Filling in exit prices" below.
 
 **You should basically never need to touch `index.html`, `css/`, `js/`, or
 `data/data.json` directly.** The one file that matters is
@@ -285,6 +289,44 @@ schedule:
 ```bash
 python scripts/watch_incoming.py
 ```
+
+---
+
+## Filling in exit prices for ticker switches (optional, improves accuracy)
+
+When an analyst switches from one ticker to another, that month shows a
+blank return by default — there's no way to know what the abandoned
+position was worth on the day it was dropped, since the monthly reports
+only ever list the price of the *current* pick.
+
+If you have access to a market data terminal (Bloomberg, FactSet, etc.),
+you can fill this gap in and get a real return for every switch, which
+also makes each analyst's all-time and yearly totals more accurate (they
+may go up or down — a switch made because a position was falling will
+lower the total, not raise it).
+
+1. Open **`exit_prices_needed.xlsx`** — it lists every ticker-switch in the
+   dataset (currently 377), grouped by ticker, with the exact date needed
+   for each. The "Instructions" tab in that file explains the Bloomberg
+   side of it (pull up `HP <GO>` for each ticker, fill in the closing
+   price for each listed date).
+2. Once it's filled in, run:
+   ```bash
+   python scripts/apply_exit_prices.py exit_prices_needed.xlsx
+   ```
+   (add `--allow-partial` if you only got through some of it and want to
+   apply what's done so far)
+3. Then rebuild as usual:
+   ```bash
+   python scripts/build_data.py
+   python scripts/build_site.py
+   ```
+
+This is entirely optional and can be done incrementally — filling in 20
+tickers today and the rest next week works fine, each run just applies
+whatever's currently filled in. Rows with a filled-in exit price show a
+small "exit: TICKER" tag next to the return in that analyst's detail view,
+so it's always clear which position a given return describes.
 
 ---
 

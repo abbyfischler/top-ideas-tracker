@@ -201,6 +201,11 @@
     border:1px solid var(--brass-dim); border-radius:3px; padding:1px 4px; margin-left:6px; vertical-align:1px;
     white-space: nowrap;
   }
+  .exit-tag{
+    display:inline-block; font-size:8.5px; font-family:var(--font-mono); color:var(--text-faint);
+    border:1px solid var(--border); border-radius:3px; padding:1px 4px; margin-left:6px; vertical-align:1px;
+    white-space: nowrap; font-weight: 400; text-transform: none;
+  }
   .etf-compare{ margin-top: 18px; }
   .etf-compare-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
   .etf-compare-head .etf-name{ font-family: var(--font-mono); font-size: 12.5px; color:#fff; }
