@@ -1,0 +1,11 @@
+{
+  "ticker": "SPX",
+  "label": "S&P 500 (broad market)",
+  "source": "slickcharts.com, total return incl. dividends, retrieved 2026-07-07",
+  "returns": {
+    "2023": 26.29,
+    "2024": 25.02,
+    "2025": 17.88,
+    "2026": 10.79
+  }
+}
