@@ -1,0 +1,13 @@
+# Generated report outputs (regenerate anytime with scripts/generate_summary_report.py)
+# Scoped to the root only so it doesn't accidentally hide PDFs dropped in incoming/
+/*.docx
+/*.pdf
+page-*.jpg
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs from watch_incoming.py (company-server automation)
+logs/
+_tmp_*.csv
