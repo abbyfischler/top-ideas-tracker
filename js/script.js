@@ -101,6 +101,226 @@ function rowContext(a){
   }
 }
 
+// ---------- Top Ideas Composite vs S&P 500 ----------
+let COMPOSITE = null; // {keys, dates, labels, composite[], spx[]}
+
+function buildCompositeSeries(){
+  if(COMPOSITE) return COMPOSITE;
+
+  // collect every report_key -> {date, label, returns:[...]}
+  const byKey = new Map();
+  DATA.forEach(a=>{
+    a.history.forEach(h=>{
+      if(!h.report_key) return;
+      if(!byKey.has(h.report_key)){
+        byKey.set(h.report_key, {date: h.date, label: h.report_label, returns: []});
+      }
+      const entry = byKey.get(h.report_key);
+      if(!entry.date && h.date) entry.date = h.date;
+      if(h.return !== null && h.return !== undefined) entry.returns.push(h.return);
+    });
+  });
+
+  const keys = Array.from(byKey.keys()).sort();
+  const dates = keys.map(k=>byKey.get(k).date || k);
+  const labels = keys.map(k=>byKey.get(k).label || k);
+
+  // equal-weighted average return across all analysts with a return that month, compounded
+  let cum = 1.0;
+  const composite = keys.map((k,i)=>{
+    const rs = byKey.get(k).returns;
+    if(i>0 && rs.length){
+      const avg = rs.reduce((s,v)=>s+v,0)/rs.length;
+      cum *= (1+avg);
+    }
+    return round4(cum);
+  });
+
+  // S&P 500 and Russell 2000: only annual total-return figures are on file, so
+  // approximate a smooth monthly path by compounding each year's annual rate at
+  // an equivalent monthly rate.
+  const spxAnnual = DATA.find(a=>a.spx_returns)?.spx_returns || {};
+  const russellAnnual = DATA.find(a=>a.russell_returns)?.russell_returns || {};
+  const compoundSeries = (annualMap)=>{
+    let cum = 1.0;
+    return keys.map((k,i)=>{
+      const year = (dates[i]||k).slice(0,4);
+      if(i>0){
+        const annual = annualMap[year];
+        if(annual !== null && annual !== undefined){
+          const monthlyRate = Math.pow(1+annual/100, 1/12) - 1;
+          cum *= (1+monthlyRate);
+        }
+      }
+      return round4(cum);
+    });
+  };
+  const spx = compoundSeries(spxAnnual);
+  const russell = compoundSeries(russellAnnual);
+
+  COMPOSITE = {keys, dates, labels, composite, spx, russell};
+  return COMPOSITE;
+}
+
+function round4(v){ return Math.round(v*10000)/10000; }
+
+function monthYearShort(d){
+  if(!d) return '';
+  const [y,m] = d.split('-');
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[parseInt(m,10)-1] + '-' + y.slice(2);
+}
+
+// Light "Performance vs. benchmark" style card chart: white background, colored
+// lines with circular markers, a %-label at every point, and sparse date ticks.
+function buildCompositeChartSvg(dates, composite, spx, russell){
+  const w = 1160, h = 420, padL = 56, padR = 24, padT = 44, padB = 40;
+  const compPct = composite.map(v=>(v/composite[0]-1)*100);
+  const spxPct = spx.map(v=>(v/spx[0]-1)*100);
+  const russellPct = russell.map(v=>(v/russell[0]-1)*100);
+  const all = compPct.concat(spxPct).concat(russellPct);
+  const rawMin = Math.min(0, ...all), rawMax = Math.max(0, ...all);
+  // round outward to a "nice" step so the y-axis reads like 70/52/34/16/-2/-20
+  const span = rawMax-rawMin;
+  const step = Math.pow(10, Math.floor(Math.log10(span/4||1)));
+  const niceStep = span/4 > step*5 ? step*10 : (span/4 > step*2 ? step*5 : step*2);
+  const min = Math.floor(rawMin/niceStep)*niceStep;
+  const max = Math.ceil(rawMax/niceStep)*niceStep;
+  const range = (max-min)||1;
+
+  const n = dates.length;
+  const stepX = n>1 ? (w-padL-padR)/(n-1) : 0;
+  const yOf = (v)=> padT + (h-padT-padB) - ((v-min)/range)*(h-padT-padB);
+  const xOf = (i)=> padL + i*stepX;
+  const toXY = (arr)=>arr.map((v,i)=>[xOf(i), yOf(v)]);
+  const compXY = toXY(compPct);
+  const spxXY = toXY(spxPct);
+  const russellXY = toXY(russellPct);
+  const pathOf = (xy)=>xy.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+  const zeroY = yOf(0);
+
+  // y-axis gridlines + labels (5 rows, evenly spaced)
+  let gridlines = '';
+  for(let i=0;i<=4;i++){
+    const v = max - (i*range/4);
+    const y = yOf(v);
+    gridlines += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w-padR}" y2="${y.toFixed(1)}" stroke="#E7E1D6" stroke-width="1"/>`;
+    gridlines += `<text x="${padL-10}" y="${(y+4).toFixed(1)}" fill="#9C9384" font-size="12" font-family="var(--font-sans)" text-anchor="end">${Math.round(v)}%</text>`;
+  }
+
+  // sparse x-axis date ticks: aim for ~7-8 labels across the width
+  const tickEvery = Math.max(1, Math.round(n/7));
+  let xTicks = '';
+  dates.forEach((d,i)=>{
+    if(i%tickEvery===0 || i===n-1){
+      const x = xOf(i);
+      xTicks += `<text x="${x.toFixed(1)}" y="${h-padB+22}" fill="#9C9384" font-size="12" font-family="var(--font-sans)" text-anchor="middle">${monthYearShort(d)}</text>`;
+    }
+  });
+
+  const compColor = '#0A1B3D';
+  const spxColor = '#C08A2E';
+  const russellColor = '#9C9384';
+
+  // point markers + %-labels; alternate label offset up/down slightly when the
+  // two lines run close together, similar to the reference chart
+  const markerLabel = (xy, pct, color, dy)=>{
+    return xy.map((p,i)=>{
+      const label = `<text x="${p[0].toFixed(1)}" y="${(p[1]+dy).toFixed(1)}" fill="${color}" font-size="11.5" font-weight="700" font-family="var(--font-sans)" text-anchor="middle">${fmtPct(pct[i])}</text>`;
+      const dot = `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${color}"/>`;
+      return dot+label;
+    }).join('');
+  };
+
+  return `<svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" style="background:#fff;">
+    ${gridlines}
+    <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${w-padR}" y2="${zeroY.toFixed(1)}" stroke="#B9B2A4" stroke-width="1"/>
+    ${xTicks}
+    <path d="${pathOf(russellXY)}" fill="none" stroke="${russellColor}" stroke-width="2" stroke-dasharray="6,4"/>
+    <path d="${pathOf(spxXY)}" fill="none" stroke="${spxColor}" stroke-width="2.5"/>
+    <path d="${pathOf(compXY)}" fill="none" stroke="${compColor}" stroke-width="2.5"/>
+    ${markerLabel(russellXY, russellPct, russellColor, 32)}
+    ${markerLabel(spxXY, spxPct, spxColor, 20)}
+    ${markerLabel(compXY, compPct, compColor, -12)}
+  </svg>`;
+}
+
+let compositeFromIdx = 0;
+let compositeToIdx = 0;
+
+function renderCompositeChart(){
+  const data = buildCompositeSeries();
+  const n = data.keys.length;
+  if(n<2) return;
+  const from = compositeFromIdx, to = compositeToIdx;
+  const dates = data.dates.slice(from, to+1);
+  const composite = data.composite.slice(from, to+1);
+  const spx = data.spx.slice(from, to+1);
+  const russell = data.russell.slice(from, to+1);
+  const compTotal = (composite[composite.length-1]/composite[0]-1)*100;
+  const spxTotal = (spx[spx.length-1]/spx[0]-1)*100;
+  const russellTotal = (russell[russell.length-1]/russell[0]-1)*100;
+
+  const svg = buildCompositeChartSvg(dates, composite, spx, russell);
+
+  const fromLabel = data.labels[from], toLabel = data.labels[to];
+  const fromShort = monthYearShort(dates[0]).toUpperCase();
+  const toShort = monthYearShort(dates[dates.length-1]).toUpperCase();
+
+  document.getElementById('composite-chart-wrap').innerHTML = `
+    <h2 class="composite-heading">Performance vs. benchmark</h2>
+    <div class="composite-card">
+      <div class="composite-legend">
+        <span class="legend-item"><span class="legend-dot" style="background:#0A1B3D"></span>Top Ideas Composite</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#C08A2E"></span>S&amp;P 500</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#9C9384"></span>Russell 2000</span>
+      </div>
+      <div class="composite-controls">
+        <label>FROM
+          <select id="composite-from"></select>
+        </label>
+        <label>TO
+          <select id="composite-to"></select>
+        </label>
+        <button id="composite-reset" type="button">Reset to full history</button>
+      </div>
+      ${svg}
+      <div class="composite-summary">
+        <span class="cs-range">${fromShort} &rarr; ${toShort}:</span>
+        <b class="cs-comp">Top Ideas Composite ${fmtPct(compTotal)}</b>
+        <span class="cs-spx">S&amp;P 500 ${fmtPct(spxTotal)}</span>
+        <span class="cs-russell">Russell 2000 ${fmtPct(russellTotal)}</span>
+      </div>
+    </div>
+  `;
+
+  const fromSel = document.getElementById('composite-from');
+  const toSel = document.getElementById('composite-to');
+  fromSel.innerHTML = data.labels.map((l,i)=>`<option value="${i}" ${i===from?'selected':''}>${l}</option>`).join('');
+  toSel.innerHTML = data.labels.map((l,i)=>`<option value="${i}" ${i===to?'selected':''}>${l}</option>`).join('');
+
+  fromSel.addEventListener('change', ()=>{
+    compositeFromIdx = Math.min(parseInt(fromSel.value,10), compositeToIdx);
+    renderCompositeChart();
+  });
+  toSel.addEventListener('change', ()=>{
+    compositeToIdx = Math.max(parseInt(toSel.value,10), compositeFromIdx);
+    renderCompositeChart();
+  });
+  document.getElementById('composite-reset').addEventListener('click', ()=>{
+    compositeFromIdx = 0;
+    compositeToIdx = n-1;
+    renderCompositeChart();
+  });
+}
+
+function initCompositeChart(){
+  const data = buildCompositeSeries();
+  compositeFromIdx = 0;
+  compositeToIdx = data.keys.length-1;
+  renderCompositeChart();
+}
+
 function buildMarquee(){
   let latestDate = null;
   DATA.forEach(a=>{ if(a.latest_date && (!latestDate || a.latest_date > latestDate)) latestDate = a.latest_date; });
@@ -636,6 +856,7 @@ document.getElementById('sortSelect').addEventListener('change', (e)=>{
 document.getElementById('stat-analysts').textContent = DATA.length;
 document.getElementById('stat-picks').textContent = DATA.reduce((s,a)=>s+a.history.length,0).toLocaleString();
 buildMarquee();
+initCompositeChart();
 buildTabs();
 buildTimeTabs();
 buildPageTabs();

@@ -1,0 +1,12 @@
+{
+  "ticker": "RUT",
+  "label": "Russell 2000 (small cap)",
+  "source": "IWM ETF total return incl. dividends (tradethatswing.com), retrieved 2026-07-20",
+  "returns": {
+    "2022": -20.48,
+    "2023": 16.83,
+    "2024": 9.96,
+    "2025": 12.07,
+    "2026": 19.49
+  }
+}

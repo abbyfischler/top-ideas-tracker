@@ -77,7 +77,7 @@ def load_master_picks():
     return rows
 
 
-def build(rows, sector_map, etf_map, spx, exit_prices):
+def build(rows, sector_map, etf_map, spx, exit_prices, russell):
     # group rows by analyst, preserving chronological order via report_key (YYYY-MM sorts correctly)
     by_analyst = defaultdict(list)
     for row in rows:
@@ -143,6 +143,7 @@ def build(rows, sector_map, etf_map, spx, exit_prices):
             "etf_label": etf['label'] if etf else None,
             "etf_returns": {str(2023 + i): etf['r'][i] for i in range(4)} if etf else None,
             "spx_returns": spx['returns'],
+            "russell_returns": russell['returns'],
         }
 
         # trailing 12-report return
@@ -215,6 +216,7 @@ def main():
     sector_map = json.loads((DATA_DIR / "sector_map.json").read_text())
     etf_map = json.loads((DATA_DIR / "etf_map.json").read_text())
     spx = json.loads((DATA_DIR / "spx_benchmark.json").read_text())
+    russell = json.loads((DATA_DIR / "russell_benchmark.json").read_text())
     exit_prices = load_exit_prices()
 
     unmapped = sorted({r['analyst'].strip() for r in rows} - set(sector_map.get('group', {}).keys()))
@@ -225,7 +227,7 @@ def main():
         print("They will still appear in the site, grouped last, with a blank sector label.")
         print("Add them to sector_map.json's \"group\" and \"label\" objects to classify them properly.\n")
 
-    final = build(rows, sector_map, etf_map, spx, exit_prices)
+    final = build(rows, sector_map, etf_map, spx, exit_prices, russell)
 
     out_path = DATA_DIR / "data.json"
     out_path.write_text(json.dumps(final, separators=(',', ':')))
