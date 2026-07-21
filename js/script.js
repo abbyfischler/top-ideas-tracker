@@ -222,14 +222,16 @@ function buildCompositeChartSvg(dates, composite, spx, russell){
   const spxColor = '#C08A2E';
   const russellColor = '#9C9384';
 
-  // point markers + %-labels; alternate label offset up/down slightly when the
-  // two lines run close together, similar to the reference chart
-  const markerLabel = (xy, pct, color, dy)=>{
-    return xy.map((p,i)=>{
-      const label = `<text x="${p[0].toFixed(1)}" y="${(p[1]+dy).toFixed(1)}" fill="${color}" font-size="11.5" font-weight="700" font-family="var(--font-sans)" text-anchor="middle">${fmtPct(pct[i])}</text>`;
-      const dot = `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${color}"/>`;
-      return dot+label;
-    }).join('');
+  // small dots at every point with a hover tooltip (via <title>), but only a
+  // visible text label at the final point — keeps the chart readable with
+  // dozens of monthly data points instead of a wall of overlapping numbers
+  const markerLabel = (xy, pct, dates, color, dy, seriesName)=>{
+    const dots = xy.map((p,i)=>
+      `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"><title>${seriesName} · ${monthYearShort(dates[i])}: ${fmtPct(pct[i])}</title></circle>`
+    ).join('');
+    const last = xy.length-1;
+    const endLabel = `<text x="${xy[last][0].toFixed(1)}" y="${(xy[last][1]+dy).toFixed(1)}" fill="${color}" font-size="12" font-weight="700" font-family="var(--font-sans)" text-anchor="middle">${fmtPct(pct[last])}</text>`;
+    return dots+endLabel;
   };
 
   return `<svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" style="background:#fff;">
@@ -239,9 +241,9 @@ function buildCompositeChartSvg(dates, composite, spx, russell){
     <path d="${pathOf(russellXY)}" fill="none" stroke="${russellColor}" stroke-width="2" stroke-dasharray="6,4"/>
     <path d="${pathOf(spxXY)}" fill="none" stroke="${spxColor}" stroke-width="2.5"/>
     <path d="${pathOf(compXY)}" fill="none" stroke="${compColor}" stroke-width="2.5"/>
-    ${markerLabel(russellXY, russellPct, russellColor, 32)}
-    ${markerLabel(spxXY, spxPct, spxColor, 20)}
-    ${markerLabel(compXY, compPct, compColor, -12)}
+    ${markerLabel(russellXY, russellPct, dates, russellColor, 20, 'Russell 2000')}
+    ${markerLabel(spxXY, spxPct, dates, spxColor, -22, 'S&P 500')}
+    ${markerLabel(compXY, compPct, dates, compColor, -10, 'Top Ideas Composite')}
   </svg>`;
 }
 
@@ -657,6 +659,7 @@ function buildTimeTabs(){
       timeFilter = t.getAttribute('data-period');
       render();
       if(pageTab==='insights') renderInsights();
+      if(pageTab==='sectors') renderSectors();
     });
   });
 }
@@ -668,10 +671,13 @@ function buildPageTabs(){
       t.classList.add('active');
       pageTab = t.getAttribute('data-page');
       const isInsights = pageTab==='insights';
-      document.getElementById('coverage-controls').style.display = isInsights ? 'none':'flex';
-      document.getElementById('main').style.display = isInsights ? 'none':'block';
+      const isSectors = pageTab==='sectors';
+      document.getElementById('coverage-controls').style.display = (isInsights||isSectors) ? 'none':'flex';
+      document.getElementById('main').style.display = (isInsights||isSectors) ? 'none':'block';
       document.getElementById('insights').style.display = isInsights ? 'block':'none';
+      document.getElementById('sectors').style.display = isSectors ? 'block':'none';
       if(isInsights) renderInsights();
+      if(isSectors) renderSectors();
     });
   });
 }
@@ -842,6 +848,122 @@ function renderInsights(){
     slider.addEventListener('input', ()=> updateMomentumCard(parseInt(slider.value,10)));
     updateMomentumCard(parseInt(slider.value,10));
   }
+}
+
+/* ================= SECTORS ================= */
+let sectorSortState = {}; // sector -> {key:'ret'|'ticker'|'n', dir:1|-1}
+let expandedSector = null;
+
+function computeSectorTickers(sector, period){
+  const analysts = DATA.filter(a=>a.sector_group===sector);
+  const byTicker = {};
+  analysts.forEach(a=>{
+    sliceForPeriod(a, period).forEach(h=>{
+      if(!h.ticker) return;
+      if(!byTicker[h.ticker]) byTicker[h.ticker] = {ticker:h.ticker, entries:[], analystsSet:new Set()};
+      byTicker[h.ticker].entries.push(h);
+      byTicker[h.ticker].analystsSet.add(a.analyst);
+    });
+  });
+  return Object.values(byTicker).map(t=>({
+    ticker: t.ticker,
+    ret: compoundReturn(t.entries),
+    n: t.entries.length,
+    analystCount: t.analystsSet.size,
+    analystNames: Array.from(t.analystsSet)
+  })).filter(t=>t.ret!==null);
+}
+
+function sortTickers(rows, sector){
+  const state = sectorSortState[sector] || {key:'ret', dir:-1};
+  const sorted = rows.slice().sort((a,b)=>{
+    let av, bv;
+    if(state.key==='ticker'){ av=a.ticker; bv=b.ticker; return state.dir*(av<bv?-1:av>bv?1:0); }
+    if(state.key==='n') { av=a.analystCount; bv=b.analystCount; }
+    else { av=a.ret; bv=b.ret; }
+    return state.dir*(av-bv);
+  });
+  return sorted;
+}
+
+function renderSectors(){
+  const wrap = document.getElementById('sectors');
+  const period = timeFilter;
+  const periodLabel = period==='ALL' ? 'all-time' : period;
+
+  const sectorRows = SECTOR_ORDER.map(sec=>{
+    const analysts = DATA.filter(a=>a.sector_group===sec);
+    const returns = analysts.map(a=>{
+      const slice = sliceForPeriod(a, period);
+      return compoundReturn(slice);
+    }).filter(v=>v!==null);
+    const avg = returns.length ? returns.reduce((s,v)=>s+v,0)/returns.length : null;
+    return {sec, avg, n: analysts.length};
+  }).filter(s=>s.avg!==null).sort((a,b)=>b.avg-a.avg);
+
+  const maxAbs = Math.max(...sectorRows.map(s=>Math.abs(s.avg)), 1);
+
+  const sectorCardsHtml = sectorRows.map(s=>{
+    const isOpen = expandedSector===s.sec;
+    const tickers = isOpen ? sortTickers(computeSectorTickers(s.sec, period), s.sec) : [];
+    const state = sectorSortState[s.sec] || {key:'ret', dir:-1};
+    const arrow = (key)=> state.key===key ? (state.dir===1?'▲':'▼') : '';
+    const tableHtml = isOpen ? `
+      <div class="sector-ticker-table">
+        <div class="stt-head">
+          <span class="stt-col-ticker sortable" data-sector="${s.sec}" data-key="ticker">Ticker ${arrow('ticker')}</span>
+          <span class="stt-col-n sortable" data-sector="${s.sec}" data-key="n"># Analysts ${arrow('n')}</span>
+          <span class="stt-col-ret sortable" data-sector="${s.sec}" data-key="ret">Return (${periodLabel}) ${arrow('ret')}</span>
+        </div>
+        ${tickers.length ? tickers.map(t=>`
+          <div class="stt-row">
+            <span class="stt-col-ticker"><b>${t.ticker}</b></span>
+            <span class="stt-col-n">${t.analystCount} · <span style="color:var(--text-faint)">${t.analystNames.map(shortName).join(', ')}</span></span>
+            <span class="stt-col-ret ${pctClass(t.ret)}" style="font-weight:700">${fmtPct(t.ret)}</span>
+          </div>`).join('') : `<div style="color:var(--text-faint);font-family:var(--font-mono);font-size:12px;padding:10px 0;">No tickers with a computable return ${periodLabel}.</div>`}
+      </div>` : '';
+
+    return `
+      <div class="sector-card">
+        <div class="sector-card-head" data-sector="${s.sec}">
+          <div class="sector-card-title">
+            <span class="sector-dot" style="background:${SECTOR_COLORS[s.sec]}"></span>
+            ${SECTOR_LABELS[s.sec]} <span style="color:var(--text-faint);font-weight:400">(${s.n} analysts)</span>
+          </div>
+          <div class="sector-card-bar-wrap">
+            <div class="sector-bar-track"><div class="sector-bar-fill" style="width:${Math.min(100,Math.abs(s.avg)/maxAbs*100)}%;background:${SECTOR_COLORS[s.sec]}"></div></div>
+            <span class="${pctClass(s.avg)}" style="font-weight:700;min-width:60px;text-align:right;">${fmtPct(s.avg)}</span>
+            <span class="sector-caret">${isOpen?'▾':'▸'}</span>
+          </div>
+        </div>
+        ${tableHtml}
+      </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="insight-narrative">
+      <p>Sector-level performance ${period==='ALL' ? 'across the full tracked history' : 'in '+period}, ranked by average analyst return. Click a sector to see which tickers within it are working and which aren't.</p>
+    </div>
+    <div class="sector-list">${sectorCardsHtml || `<div class="empty">No data for ${periodLabel}.</div>`}</div>
+  `;
+
+  wrap.querySelectorAll('.sector-card-head').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const sec = el.getAttribute('data-sector');
+      expandedSector = (expandedSector===sec) ? null : sec;
+      renderSectors();
+    });
+  });
+  wrap.querySelectorAll('.sortable').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const sec = el.getAttribute('data-sector');
+      const key = el.getAttribute('data-key');
+      const cur = sectorSortState[sec] || {key:'ret', dir:-1};
+      sectorSortState[sec] = (cur.key===key) ? {key, dir:-cur.dir} : {key, dir: key==='ticker' ? 1 : -1};
+      renderSectors();
+    });
+  });
 }
 
 document.getElementById('search').addEventListener('input', (e)=>{
